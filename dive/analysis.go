@@ -119,50 +119,131 @@ func layerInfo(img *image.Image) []Layer {
 			Index:   int(l.Metadata.Index),
 			Digest:  l.Metadata.Digest,
 			Command: strings.TrimPrefix(createdBy, "/bin/sh -c "),
-			Size:    uint64(l.Metadata.Size),
+			Size:    allocatedLayerSize(img, l),
 		}
 	}
 	return layers
 }
 
-type pathEfficiency struct {
-	// count is how many layers add or remove the path
-	count int
-	// cumulative is the size of every copy layers added
-	cumulative int64
-	// final is the size of the copy the final image holds, 0 once removed
-	final int64
+// allocatedLayerSize is the storage the layer really occupies: the sum of the tar data sections its
+// members carry. A hardlink header carries no data, and a sparse member carries only its mapped
+// fragments, so both count their real bytes rather than a named or apparent size. It walks the
+// layer's own diff tree once and sums each catalog entry's allocated size. stereoscope's
+// Metadata.Size sums raw header sizes and so overstates a sparse layer by its apparent length; it
+// stays the fallback when a member has no readable header.
+func allocatedLayerSize(img *image.Image, l *image.Layer) uint64 {
+	var total int64
+	_ = layertree.Walk(l.Tree, nil, func(n *filenode.FileNode, _ bool) error {
+		if n.Reference == nil {
+			return nil
+		}
+		if hdr, ok := layertree.Header(img, n.Reference); ok {
+			total += layertree.AllocatedSize(hdr)
+		}
+		return nil
+	})
+	if total > 0 {
+		return uint64(total)
+	}
+	// no measurable data section (an empty layer, or a tree without catalog headers): keep the
+	// metadata value rather than reporting zero for a layer that genuinely holds something
+	return uint64(l.Metadata.Size)
+}
+
+// identityAccount is one tar data section: the bytes a single member physically carries, plus the path that
+// member is reached at for reporting. Every same-layer hardlink resolves to the same account rather than its own.
+type identityAccount struct {
+	bytes   int64
+	carrier file.Path
 }
 
 // imageEfficiency scores the image and lists the paths that waste bytes.
 //
-// waste is defined per path as cumulative - final: every byte layers added for the path minus the bytes the final
-// image still holds there. An overwritten copy, a removed file and a file removed and added back again each waste
-// exactly the bytes that are stuck in lower layers yet unreachable in the image. The score is the share of all
-// added bytes that are not wasted.
+// It runs two independent passes, because path occurrences and data identities answer different questions:
 //
-// It walks the leaf paths of every layer's own tree. A path a layer removes is an occurrence that sets its final
-// size to 0. Removal is anything that makes a path seen in a lower layer disappear from this layer's squashed tree:
-// a whiteout of the file or of a parent dir, an opaque dir, or a file or link put in place of a parent dir.
+//   - The count pass works per path. A whiteout, an opaque dir or a non-dir put in place of a dir can hide
+//     lower paths; those removals are only visible as transitions between one layer's squashed tree and the
+//     next, since every squashed tree has whiteout markers stripped. removedPaths finds them. This preserves
+//     the "how many layers added or removed the path" count.
+//   - The byte pass works per data identity (a catalog id, with same-layer hardlinks resolving to the member
+//     they name). A hardlink's extra names carry no data section, so the bytes are counted once no matter how
+//     many names point at them. An identity is wasted only when NO name for it survives in the final image:
+//     overwriting or whiteouting one name while another stays live costs nothing. Sparse files are measured by
+//     their allocated data blocks, not their apparent length.
+//
+// A dead identity's bytes are reported on the path of the member that carried them, together with that path's
+// occurrence count. The score is the share of all discovered bytes that are not wasted.
 func imageEfficiency(ctx context.Context, img *image.Image) (float64, []Inefficiency, error) {
-	byPath := make(map[file.Path]*pathEfficiency)
-	var order []file.Path
+	countByPath, pathOrder, err := countPathOccurrences(ctx, img)
+	if err != nil {
+		return 0, nil, err
+	}
 
-	record := func(p file.Path, size int64) {
-		data, ok := byPath[p]
-		if !ok {
-			data = &pathEfficiency{}
-			byPath[p] = data
-			order = append(order, p)
+	accounts, discovered, err := collectIdentityAccounts(ctx, img)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	live, err := liveIdentities(ctx, img)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	wasteByPath := make(map[file.Path]uint64)
+	var wasted int64
+	for id, account := range accounts {
+		if live[id] {
+			continue
 		}
-		data.count++
-		data.cumulative += size
-		data.final = size
+		wasted += account.bytes
+		wasteByPath[account.carrier] += uint64(account.bytes)
+	}
+
+	var inefficiencies []Inefficiency
+	for _, p := range pathOrder {
+		bytes := wasteByPath[p]
+		if bytes == 0 {
+			continue
+		}
+		count := countByPath[p]
+		if count == 0 {
+			// every dead carrier was added in some layer, so this only guards an unexpected accounting gap
+			count = 1
+		}
+		inefficiencies = append(inefficiencies, Inefficiency{Path: string(p), Count: count, SizeBytes: bytes})
+	}
+
+	sort.Slice(inefficiencies, func(i, j int) bool {
+		a, b := inefficiencies[i], inefficiencies[j]
+		if a.SizeBytes != b.SizeBytes {
+			return a.SizeBytes > b.SizeBytes
+		}
+		return a.Path < b.Path
+	})
+
+	score := 1.0
+	if discovered != 0 {
+		score = float64(discovered-wasted) / float64(discovered)
+	}
+	return score, inefficiencies, nil
+}
+
+// countPathOccurrences walks each layer's own tree and counts, per path, every add and every removal a later
+// layer performs. It returns the counts and the paths in first-seen order for deterministic reporting.
+func countPathOccurrences(ctx context.Context, img *image.Image) (map[file.Path]int, []file.Path, error) {
+	countByPath := make(map[file.Path]int)
+	var pathOrder []file.Path
+
+	count := func(p file.Path) {
+		if _, seen := countByPath[p]; !seen {
+			pathOrder = append(pathOrder, p)
+		}
+		countByPath[p]++
 	}
 
 	for i, l := range img.Layers {
 		if err := ctx.Err(); err != nil {
-			return 0, nil, err
+			return nil, nil, err
 		}
 		// paths of this layer that may hide lower paths: whiteout targets, opaque dirs and non-dirs
 		var roots []file.Path
@@ -183,48 +264,94 @@ func imageEfficiency(ctx context.Context, img *image.Image) (float64, []Ineffici
 			if n.FileType != file.TypeDirectory {
 				roots = append(roots, p)
 			}
-			record(p, fileSize(img, n.Reference))
+			count(p)
 			return nil
 		})
 		if err != nil {
-			return 0, nil, fmt.Errorf("unable to walk layer %d: %w", i, err)
+			return nil, nil, fmt.Errorf("unable to walk layer %d: %w", i, err)
 		}
 		if i == 0 {
 			continue
 		}
 		for _, p := range removedPaths(img.Layers[i-1].SquashedTree, l.SquashedTree, roots) {
-			if data, ok := byPath[p]; ok {
-				data.count++
-				data.final = 0
+			if _, seen := countByPath[p]; !seen {
+				pathOrder = append(pathOrder, p)
 			}
+			countByPath[p]++
 		}
 	}
+	return countByPath, pathOrder, nil
+}
 
-	var wasted, discovered int64
-	var inefficiencies []Inefficiency
-	for _, p := range order {
-		data := byPath[p]
-		waste := data.cumulative - data.final
-		wasted += waste
-		discovered += data.cumulative
-		if waste > 0 {
-			inefficiencies = append(inefficiencies, Inefficiency{Path: string(p), Count: data.count, SizeBytes: uint64(waste)})
+// collectIdentityAccounts walks every layer's own tree and registers each distinct tar data section once,
+// keyed by data identity. The total returned is every data byte the layer blobs carry (the discovered set).
+//
+// A same-layer duplicate tar member collapses to one catalog ref before this sees it, so such a member counts
+// once; its physically duplicated data section is not observable through the catalog (a known limitation, and
+// no mainstream builder emits duplicate members).
+func collectIdentityAccounts(ctx context.Context, img *image.Image) (map[file.ID]*identityAccount, int64, error) {
+	accounts := make(map[file.ID]*identityAccount)
+	var discovered int64
+
+	for _, l := range img.Layers {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		err := layertree.Walk(l.Tree, nil, func(n *filenode.FileNode, _ bool) error {
+			if n.Reference == nil {
+				return nil
+			}
+			identity, ok := layertree.ResolveIdentity(img, l.Tree, n.Reference)
+			if !ok {
+				// header-only entry, or a hardlink stereoscope could not adopt: no data to count
+				return nil
+			}
+			if _, seen := accounts[identity.ID()]; seen {
+				return nil
+			}
+			hdr, hdrOK := layertree.Header(img, n.Reference)
+			if !hdrOK {
+				return nil
+			}
+			bytes := layertree.AllocatedSize(hdr)
+			accounts[identity.ID()] = &identityAccount{bytes: bytes, carrier: n.RealPath}
+			discovered += bytes
+			return nil
+		})
+		if err != nil {
+			return nil, 0, err
 		}
 	}
+	return accounts, discovered, nil
+}
 
-	sort.Slice(inefficiencies, func(i, j int) bool {
-		a, b := inefficiencies[i], inefficiencies[j]
-		if a.SizeBytes != b.SizeBytes {
-			return a.SizeBytes > b.SizeBytes
+// liveIdentities is the set of data identities reachable through some name in the final image. It walks the
+// final squashed tree, which already has every whiteout and opaque marker applied, so no whiteout special
+// casing is needed: a lower identity simply fails this membership test when all its names were hidden.
+func liveIdentities(ctx context.Context, img *image.Image) (map[file.ID]bool, error) {
+	live := make(map[file.ID]bool)
+	err := layertree.Walk(img.SquashedTree(), nil, func(n *filenode.FileNode, _ bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		return a.Path < b.Path
+		if n.Reference == nil {
+			return nil
+		}
+		// resolve against the layer that owns this ref, since a hardlink's binding is fixed within that layer
+		owner := img.FileCatalog.Layer(*n.Reference)
+		if owner == nil {
+			return nil
+		}
+		identity, ok := layertree.ResolveIdentity(img, owner.Tree, n.Reference)
+		if ok {
+			live[identity.ID()] = true
+		}
+		return nil
 	})
-
-	score := 1.0
-	if discovered != 0 {
-		score = float64(discovered-wasted) / float64(discovered)
+	if err != nil {
+		return nil, err
 	}
-	return score, inefficiencies, nil
+	return live, nil
 }
 
 // removedPaths lists the paths at or under roots in the lower squashed tree that are gone from the upper one.
@@ -252,13 +379,4 @@ func removedPaths(lower, upper filetree.Reader, roots []file.Path) []file.Path {
 		}
 	}
 	return removed
-}
-
-// fileSize is the size the tar header recorded for ref, so a hardlink is 0 bytes (stereoscope describes an
-// in-layer hardlink as the file it names, with that file's size).
-func fileSize(img *image.Image, ref *file.Reference) int64 {
-	if hdr, ok := layertree.Header(img, ref); ok {
-		return hdr.Size
-	}
-	return 0
 }

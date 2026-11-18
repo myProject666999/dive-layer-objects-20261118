@@ -1,0 +1,59 @@
+{
+  "layer": [
+    {
+      "index": 0,
+      "id": "sha256:4a77d0186ac63f602226fccf2a1156f7a8f7644342a951ddc8043141750c281d",
+      "digestId": "sha256:4a77d0186ac63f602226fccf2a1156f7a8f7644342a951ddc8043141750c281d",
+      "sizeBytes": 400,
+      "command": "ln a b c",
+      "fileList": [
+        {
+          "path": "data/a.txt",
+          "typeFlag": 48,
+          "linkName": "",
+          "size": 400,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "data/b.txt",
+          "typeFlag": 49,
+          "linkName": "data/a.txt",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "data/c.txt",
+          "typeFlag": 49,
+          "linkName": "data/a.txt",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "data",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    }
+  ],
+  "image": {
+    "sizeBytes": 400,
+    "inefficientBytes": 0,
+    "efficiencyScore": 1,
+    "fileReference": []
+  }
+}

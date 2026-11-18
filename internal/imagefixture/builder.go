@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -39,6 +41,13 @@ const (
 	Zstd
 )
 
+// SparseFragment is one mapped data region of a sparse entry: Content is written at Offset within
+// the file's apparent (logical) size. Fragments must be given in ascending Offset order.
+type SparseFragment struct {
+	Offset  int64
+	Content string
+}
+
 // Entry is a single tar entry within a layer.
 type Entry struct {
 	Name     string
@@ -47,6 +56,12 @@ type Entry struct {
 	UID, GID int
 	Linkname string
 	Content  string
+	// ApparentSize is the logical size of a sparse entry (the size tar reports after extracting). It
+	// is used only when Sparse is set; the tar member itself stores only the fragment contents.
+	ApparentSize int64
+	// Sparse non-nil makes this entry a GNU PAX sparse 0.1 member hand-written as raw tar blocks,
+	// since archive/tar cannot write sparse members itself.
+	Sparse []SparseFragment
 }
 
 // History is one image config history entry.
@@ -302,6 +317,18 @@ func layerTar(entries []Entry) ([]byte, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for _, e := range entries {
+		if len(e.Sparse) > 0 {
+			// archive/tar cannot write sparse members; flush any pending state then write raw blocks
+			// into the same buffer. tar.Writer passes writes straight through (its block field is a
+			// reusable single header, not a buffer), so the two producers interleave cleanly.
+			if err := tw.Flush(); err != nil {
+				return nil, err
+			}
+			if err := writeSparseEntry(&buf, e); err != nil {
+				return nil, fmt.Errorf("entry %q: %w", e.Name, err)
+			}
+			continue
+		}
 		hdr := &tar.Header{
 			Name:     e.Name,
 			Typeflag: e.Type,
@@ -341,6 +368,113 @@ func layerTar(entries []Entry) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// writeSparseEntry emits a GNU PAX sparse 0.1 member as raw 512-byte tar blocks: a PAX extended
+// header carrying the sparse map and apparent size, followed by a regular member whose body holds
+// only the mapped data fragments. The Go tar reader (and container tooling) reconstructs the
+// apparent-length file, while the layer blob stores just the fragment bytes.
+func writeSparseEntry(buf *bytes.Buffer, e Entry) error {
+	if e.ApparentSize <= 0 {
+		return fmt.Errorf("sparse entry needs a positive ApparentSize")
+	}
+	var dataLen int64
+	mapParts := make([]string, 0, 2*len(e.Sparse))
+	var lastOffset int64 = -1
+	for i, frag := range e.Sparse {
+		if frag.Offset < 0 || frag.Offset < lastOffset {
+			return fmt.Errorf("sparse fragment %d offsets must be non-negative and ascending", i)
+		}
+		lastOffset = frag.Offset
+		length := int64(len(frag.Content))
+		if frag.Offset+length > e.ApparentSize {
+			return fmt.Errorf("sparse fragment %d runs past the apparent size", i)
+		}
+		mapParts = append(mapParts, strconv.FormatInt(frag.Offset, 10), strconv.FormatInt(length, 10))
+		dataLen += length
+	}
+
+	mode := e.Mode
+	if mode == 0 {
+		mode = 0o644
+	}
+
+	var pax bytes.Buffer
+	paxRecords := []struct{ key, value string }{
+		{"GNU.sparse.major", "0"},
+		{"GNU.sparse.minor", "1"},
+		{"GNU.sparse.name", e.Name},
+		{"GNU.sparse.realsize", strconv.FormatInt(e.ApparentSize, 10)},
+		{"GNU.sparse.size", strconv.FormatInt(e.ApparentSize, 10)},
+		{"GNU.sparse.numblocks", strconv.Itoa(len(e.Sparse))},
+		{"GNU.sparse.map", strings.Join(mapParts, ",")},
+	}
+	for _, rec := range paxRecords {
+		pax.WriteString(paxRecord(rec.key, rec.value))
+	}
+	paxBody := pax.Bytes()
+
+	// PAX extended header, then the data member under GNU's sparse file name
+	writeTarBlock(buf, "PaxHeaders.0/"+e.Name, 0, tar.TypeXHeader, int64(len(paxBody)), "")
+	buf.Write(paxBody)
+	writePadding(buf, len(paxBody))
+
+	writeTarBlock(buf, "GNUSparseFile.0/"+e.Name, mode, tar.TypeReg, dataLen, "")
+	for _, frag := range e.Sparse {
+		buf.WriteString(frag.Content)
+	}
+	writePadding(buf, int(dataLen))
+	return nil
+}
+
+// paxRecord encodes one length-prefixed PAX record ("<len> <key>=<value>\n"), choosing len so the
+// whole record is exactly len bytes.
+func paxRecord(key, value string) string {
+	rec := key + "=" + value + "\n"
+	n := len(rec)
+	for {
+		candidate := strconv.Itoa(n) + " " + rec
+		if len(candidate) == n {
+			return candidate
+		}
+		n = len(candidate)
+	}
+}
+
+// writeTarBlock writes one ustar header block with the given fields and a correct checksum.
+func writeTarBlock(buf *bytes.Buffer, name string, mode int64, typ byte, size int64, linkname string) {
+	var blk [512]byte
+	copy(blk[0:100], name)
+	octal := func(off, n int, v int64) {
+		s := fmt.Sprintf("%0*o", n-1, v)
+		copy(blk[off:off+n-1], s)
+		blk[off+n-1] = 0
+	}
+	octal(100, 8, mode)
+	octal(108, 8, 0) // uid
+	octal(116, 8, 0) // gid
+	octal(124, 12, size)
+	octal(136, 12, 0) // mtime
+	for i := 148; i < 156; i++ {
+		blk[i] = ' ' // checksum field counts as spaces
+	}
+	blk[156] = typ
+	copy(blk[157:257], linkname)
+	copy(blk[257:263], "ustar\x00")
+	copy(blk[263:265], "00")
+	var checksum int64
+	for _, b := range blk {
+		checksum += int64(b)
+	}
+	copy(blk[148:156], fmt.Sprintf("%06o\x00 ", checksum))
+	buf.Write(blk[:])
+}
+
+// writePadding zero-fills up to the next 512-byte boundary.
+func writePadding(buf *bytes.Buffer, n int) {
+	if rem := n % 512; rem != 0 {
+		buf.Write(make([]byte, 512-rem))
+	}
 }
 
 func compress(data []byte, c Compression) ([]byte, error) {

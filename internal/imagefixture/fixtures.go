@@ -266,6 +266,90 @@ func Fixtures() map[string]Spec {
 			},
 			History: []History{run("touch deep"), run("touch other")},
 		},
+		"sparse-file-waste": {
+			// a 1 MiB apparent sparse file holding 12 real bytes is overwritten by a plain 100 byte file:
+			// only the 12 allocated bytes are wasted, not the apparent megabyte
+			Format: OCISave,
+			Layers: [][]Entry{
+				{
+					dir("var/"),
+					{
+						Name:         "var/big.bin",
+						ApparentSize: 1 << 20,
+						Sparse:       []SparseFragment{{Offset: 4096, Content: strings.Repeat("s", 12)}},
+					},
+				},
+				{
+					dir("var/"),
+					file("var/big.bin", strings.Repeat("x", 100)),
+				},
+			},
+			History: []History{run("make sparse"), run("rewrite big.bin")},
+		},
+		"sparse-file-removed": {
+			// removing the sparse file wastes its 12 allocated bytes, not its 1 MiB apparent length
+			Format: OCISave,
+			Layers: [][]Entry{
+				{
+					dir("var/"),
+					{
+						Name:         "var/big.bin",
+						ApparentSize: 1 << 20,
+						Sparse:       []SparseFragment{{Offset: 4096, Content: strings.Repeat("s", 12)}},
+					},
+				},
+				{
+					dir("var/"),
+					whiteout("var/.wh.big.bin"),
+				},
+			},
+			History: []History{run("make sparse"), run("rm big.bin")},
+		},
+		"hardlink-three-names": {
+			// three names for one inode: one data section counted once, two zero-size hardlink headers
+			Format: OCISave,
+			Layers: [][]Entry{{
+				dir("data/"),
+				file("data/a.txt", strings.Repeat("a", 400)),
+				Entry{Name: "data/b.txt", Type: tar.TypeLink, Linkname: "data/a.txt"},
+				Entry{Name: "data/c.txt", Type: tar.TypeLink, Linkname: "data/a.txt"},
+			}},
+			History: []History{run("ln a b c")},
+		},
+		"hardlink-whiteout-one-name": {
+			// whiteing out the data-carrying name leaves the hardlink serving the same inode, so no
+			// bytes are wasted
+			Format: OCISave,
+			Layers: [][]Entry{
+				{
+					dir("data/"),
+					file("data/a.txt", strings.Repeat("a", 500)),
+					Entry{Name: "data/z.txt", Type: tar.TypeLink, Linkname: "data/a.txt"},
+				},
+				{
+					dir("data/"),
+					whiteout("data/.wh.a.txt"),
+				},
+			},
+			History: []History{run("ln a z"), run("rm a")},
+		},
+		"cross-layer-and-dangling-hardlink": {
+			// a hardlink naming a lower-layer file and a hardlink naming nothing: neither can be
+			// adopted within its own layer, so both stay zero-size entries and cost no bytes
+			Format: OCISave,
+			Layers: [][]Entry{
+				{
+					dir("base/"),
+					file("base/lib.so", strings.Repeat("l", 300)),
+				},
+				{
+					dir("app/"),
+					Entry{Name: "app/h", Type: tar.TypeLink, Linkname: "base/lib.so"},
+					Entry{Name: "app/d", Type: tar.TypeLink, Linkname: "missing"},
+				},
+			},
+			History: []History{run("install lib"), run("hardlink across and dangling")},
+		},
 	}
 }
 

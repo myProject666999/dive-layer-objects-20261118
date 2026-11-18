@@ -28,14 +28,17 @@ type Layer struct {
 
 // FileInfo is the tar header metadata of one layer entry.
 type FileInfo struct {
-	Path     string      `json:"path"`
-	TypeFlag byte        `json:"typeFlag"`
-	Linkname string      `json:"linkName"`
-	Size     int64       `json:"size"`
-	Mode     os.FileMode `json:"fileMode"`
-	Uid      int         `json:"uid"`
-	Gid      int         `json:"gid"`
-	IsDir    bool        `json:"isDir"`
+	Path     string `json:"path"`
+	TypeFlag byte   `json:"typeFlag"`
+	Linkname string `json:"linkName"`
+	Size     int64  `json:"size"`
+	// AllocatedSize is set only for a sparse file and is the data bytes its member actually stores;
+	// Size stays the apparent (logical) length. It is omitted for ordinary entries.
+	AllocatedSize int64       `json:"allocatedSize,omitempty"`
+	Mode          os.FileMode `json:"fileMode"`
+	Uid           int         `json:"uid"`
+	Gid           int         `json:"gid"`
+	IsDir         bool        `json:"isDir"`
 }
 
 type Image struct {
@@ -73,7 +76,7 @@ func NewExport(analysis *dive.Analysis) *Export {
 				return nil
 			}
 			fi := hdr.FileInfo()
-			fileList = append(fileList, FileInfo{
+			info := FileInfo{
 				Path:     strings.TrimPrefix(string(n.Reference.RealPath), "/"),
 				TypeFlag: hdr.Typeflag,
 				Linkname: hdr.Linkname,
@@ -82,7 +85,11 @@ func NewExport(analysis *dive.Analysis) *Export {
 				Uid:      hdr.Uid,
 				Gid:      hdr.Gid,
 				IsDir:    fi.IsDir(),
-			})
+			}
+			if layertree.IsSparse(hdr) {
+				info.AllocatedSize = layertree.AllocatedSize(hdr)
+			}
+			fileList = append(fileList, info)
 			return nil
 		})
 		if err != nil {

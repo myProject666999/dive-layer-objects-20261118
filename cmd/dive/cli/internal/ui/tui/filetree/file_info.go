@@ -17,11 +17,18 @@ type FileInfo struct {
 	Path     string
 	TypeFlag byte
 	Linkname string
-	Size     int64
-	Mode     os.FileMode
-	Uid      int
-	Gid      int
-	IsDir    bool
+	// Size is the apparent (logical) file size from the tar header, what `ls` reports for the
+	// extracted file. For a sparse file this can be far larger than the bytes the layer stores.
+	Size int64
+	// AllocatedSize is the data the member actually stores in the layer blob: the mapped fragments
+	// of a sparse file, equal to Size for an ordinary file. It backs waste accounting, not display.
+	AllocatedSize int64
+	// Sparse marks a GNU sparse file whose apparent size exceeds its allocated data.
+	Sparse bool
+	Mode   os.FileMode
+	Uid    int
+	Gid    int
+	IsDir  bool
 	// xattrs are the extended attributes (e.g. file capabilities) from the tar PAX records, nil when there are none
 	xattrs map[string]string
 	// implicit marks a dir that has no entry of its own, it only exists as the parent of other entries
@@ -40,16 +47,18 @@ func newFileInfo(img *image.Image, ref *file.Reference) FileInfo {
 	}
 	fi := hdr.FileInfo()
 	return FileInfo{
-		Path:     strings.TrimPrefix(string(ref.RealPath), "/"),
-		TypeFlag: hdr.Typeflag,
-		Linkname: hdr.Linkname,
-		Size:     fi.Size(),
-		Mode:     fi.Mode(),
-		Uid:      hdr.Uid,
-		Gid:      hdr.Gid,
-		IsDir:    fi.IsDir(),
-		xattrs:   xattrs(hdr),
-		ref:      ref,
+		Path:          strings.TrimPrefix(string(ref.RealPath), "/"),
+		TypeFlag:      hdr.Typeflag,
+		Linkname:      hdr.Linkname,
+		Size:          fi.Size(),
+		AllocatedSize: layertree.AllocatedSize(hdr),
+		Sparse:        layertree.IsSparse(hdr),
+		Mode:          fi.Mode(),
+		Uid:           hdr.Uid,
+		Gid:           hdr.Gid,
+		IsDir:         fi.IsDir(),
+		xattrs:        xattrs(hdr),
+		ref:           ref,
 	}
 }
 

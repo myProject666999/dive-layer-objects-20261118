@@ -381,3 +381,26 @@ func TestFileInfo_Compare(t *testing.T) {
 	assert.Equal(t, Unmodified, capped.Compare(capped, same))
 	assert.Equal(t, Modified, reg.Compare(reg, func(FileInfo) (uint64, bool) { return 0, false }))
 }
+
+func TestNewTree_SparseFileInfo(t *testing.T) {
+	// the TUI keeps the apparent length for display but records the allocated bytes and the marker
+	img := imagefixture.LoadSpec(t, imagefixture.Spec{Layers: [][]imagefixture.Entry{{
+		{Name: "var/", Type: tar.TypeDir},
+		{
+			Name:         "var/big.bin",
+			ApparentSize: 1 << 20,
+			Sparse:       []imagefixture.SparseFragment{{Offset: 4096, Content: "hello sparse"}},
+		},
+	}}})
+
+	tree, opaqueDirs := newTree(img, img.Layers[0].Tree)
+	require.Empty(t, opaqueDirs)
+
+	node, err := tree.GetNode("/var/big.bin")
+	require.NoError(t, err)
+	info := node.Data.FileInfo
+	assert.True(t, info.Sparse)
+	assert.Equal(t, int64(1<<20), info.Size, "the size column keeps the apparent length")
+	assert.Equal(t, int64(12), info.AllocatedSize, "the stored data is only the fragment")
+	assert.Equal(t, "s", node.MetadataString()[:1])
+}

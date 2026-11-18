@@ -172,6 +172,9 @@ func (node *FileNode) MetadataString() string {
 		dir = "b"
 	case node.Data.FileInfo.TypeFlag == tar.TypeFifo:
 		dir = "p"
+	case node.Data.FileInfo.Sparse:
+		// a sparse regular file: keep the single-column width, signal it with 's'
+		dir = "s"
 	}
 
 	fm := permbits.FileMode(node.Data.FileInfo.Mode)

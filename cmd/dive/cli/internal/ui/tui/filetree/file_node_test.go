@@ -193,6 +193,7 @@ func TestFileTypeDisplay(t *testing.T) {
 		{FileInfo{TypeFlag: tar.TypeChar}, "c"},
 		{FileInfo{TypeFlag: tar.TypeBlock}, "b"},
 		{FileInfo{TypeFlag: tar.TypeFifo}, "p"},
+		{FileInfo{TypeFlag: tar.TypeReg, Sparse: true}, "s"},
 	}
 	for _, tt := range tests {
 		tree := NewFileTree()

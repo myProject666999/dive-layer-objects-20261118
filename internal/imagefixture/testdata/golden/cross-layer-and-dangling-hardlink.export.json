@@ -1,0 +1,78 @@
+{
+  "layer": [
+    {
+      "index": 0,
+      "id": "sha256:4db900c4fe3647d25efa6d9d16e674f7a5691233127960dc52d64fc42021de5d",
+      "digestId": "sha256:4db900c4fe3647d25efa6d9d16e674f7a5691233127960dc52d64fc42021de5d",
+      "sizeBytes": 300,
+      "command": "install lib",
+      "fileList": [
+        {
+          "path": "base/lib.so",
+          "typeFlag": 48,
+          "linkName": "",
+          "size": 300,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "base",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "id": "sha256:ba8b32f7a15f86f87af81a8c9ac320537b00e6ddee56bb055da892a52a29dcd4",
+      "digestId": "sha256:ba8b32f7a15f86f87af81a8c9ac320537b00e6ddee56bb055da892a52a29dcd4",
+      "sizeBytes": 0,
+      "command": "hardlink across and dangling",
+      "fileList": [
+        {
+          "path": "app/d",
+          "typeFlag": 49,
+          "linkName": "missing",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "app/h",
+          "typeFlag": 49,
+          "linkName": "base/lib.so",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "app",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    }
+  ],
+  "image": {
+    "sizeBytes": 300,
+    "inefficientBytes": 0,
+    "efficiencyScore": 1,
+    "fileReference": []
+  }
+}

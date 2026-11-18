@@ -1,0 +1,75 @@
+{
+  "layer": [
+    {
+      "index": 0,
+      "id": "sha256:3d30a0e42e3faef1b2b98784a78eaed7243775f278e9478951a0b67917cb18ac",
+      "digestId": "sha256:3d30a0e42e3faef1b2b98784a78eaed7243775f278e9478951a0b67917cb18ac",
+      "sizeBytes": 12,
+      "command": "make sparse",
+      "fileList": [
+        {
+          "path": "var/big.bin",
+          "typeFlag": 48,
+          "linkName": "",
+          "size": 1048576,
+          "allocatedSize": 12,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "var",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "id": "sha256:1f1392cbc59b6418f051037cd97a1f720b34982ebf0e97faef6d63692823f4dd",
+      "digestId": "sha256:1f1392cbc59b6418f051037cd97a1f720b34982ebf0e97faef6d63692823f4dd",
+      "sizeBytes": 0,
+      "command": "rm big.bin",
+      "fileList": [
+        {
+          "path": "var/.wh.big.bin",
+          "typeFlag": 48,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "var",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    }
+  ],
+  "image": {
+    "sizeBytes": 12,
+    "inefficientBytes": 12,
+    "efficiencyScore": 0,
+    "fileReference": [
+      {
+        "count": 2,
+        "sizeBytes": 12,
+        "file": "/var/big.bin"
+      }
+    ]
+  }
+}

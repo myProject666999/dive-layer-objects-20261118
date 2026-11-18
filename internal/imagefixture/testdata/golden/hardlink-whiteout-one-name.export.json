@@ -1,0 +1,78 @@
+{
+  "layer": [
+    {
+      "index": 0,
+      "id": "sha256:d5de92574e2f141a85f55c2c592f95bfa23026f1f4d4e3357ef72d41d6117a5d",
+      "digestId": "sha256:d5de92574e2f141a85f55c2c592f95bfa23026f1f4d4e3357ef72d41d6117a5d",
+      "sizeBytes": 500,
+      "command": "ln a z",
+      "fileList": [
+        {
+          "path": "data/a.txt",
+          "typeFlag": 48,
+          "linkName": "",
+          "size": 500,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "data/z.txt",
+          "typeFlag": 49,
+          "linkName": "data/a.txt",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "data",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "id": "sha256:67d9bb0387fcffab4c9de251d8d86ba3242dcced471770ae24d83e99f67fafec",
+      "digestId": "sha256:67d9bb0387fcffab4c9de251d8d86ba3242dcced471770ae24d83e99f67fafec",
+      "sizeBytes": 0,
+      "command": "rm a",
+      "fileList": [
+        {
+          "path": "data/.wh.a.txt",
+          "typeFlag": 48,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 420,
+          "uid": 0,
+          "gid": 0,
+          "isDir": false
+        },
+        {
+          "path": "data",
+          "typeFlag": 53,
+          "linkName": "",
+          "size": 0,
+          "fileMode": 2147484141,
+          "uid": 0,
+          "gid": 0,
+          "isDir": true
+        }
+      ]
+    }
+  ],
+  "image": {
+    "sizeBytes": 500,
+    "inefficientBytes": 0,
+    "efficiencyScore": 1,
+    "fileReference": []
+  }
+}
